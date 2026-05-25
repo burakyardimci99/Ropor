@@ -1,0 +1,58 @@
+from functools import lru_cache
+
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
+
+    # Database
+    database_url: str = Field(
+        default="postgresql+asyncpg://lab:lab_dev_password@postgres:5432/ailab"
+    )
+    database_url_sync: str = Field(
+        default="postgresql+psycopg://lab:lab_dev_password@postgres:5432/ailab"
+    )
+
+    # Redis
+    redis_url: str = Field(default="redis://redis:6379/0")
+
+    # Server
+    backend_host: str = "0.0.0.0"
+    backend_port: int = 8000
+    log_level: str = "INFO"
+    cors_origins: str = "http://localhost:3000"
+
+    # Face recognition
+    face_match_threshold: float = 0.55
+    face_unknown_threshold: float = 0.45
+    visit_debounce_minutes: int = 30
+
+    # Email
+    email_backend: str = "mock"  # mock | smtp
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    email_from: str = "noreply@lab.example.com"
+    public_base_url: str = "http://localhost:3000"
+    email_domain_whitelist: str = ""
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
+
+    @property
+    def email_domain_list(self) -> list[str]:
+        return [d.strip().lower() for d in self.email_domain_whitelist.split(",") if d.strip()]
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
+
+
+settings = get_settings()
