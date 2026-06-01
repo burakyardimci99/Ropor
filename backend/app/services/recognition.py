@@ -11,7 +11,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.models import Visit
-from app.services import presence
+from app.services import badges, presence
 from app.services.greeting import build_greeting
 from app.services.matching import find_nearest
 from app.ws.manager import kiosk_manager
@@ -62,16 +62,30 @@ async def _on_recognized(session, user_id, similarity: float, quality) -> None:
     if greeting is None:
         return
 
+    fresh_visit_id: str | None = None
     if await presence.should_record_visit(user_id):
-        session.add(
-            Visit(user_id=user_id, detection_confidence=similarity)
-        )
+        visit = Visit(user_id=user_id, detection_confidence=similarity)
+        session.add(visit)
         await session.commit()
+        await session.refresh(visit)
+        fresh_visit_id = str(visit.id)
         logger.info("recorded visit for %s (sim=%.3f)", user_id, similarity)
+        # Evaluate badges in the background so we don't delay the greeting.
+        # `evaluate_user` commits its own session changes and broadcasts the
+        # achievement event itself.
+        try:
+            await badges.evaluate_user(session, user_id)
+        except Exception:  # noqa: BLE001
+            logger.exception("badge evaluation failed for %s", user_id)
 
     await presence.mark_inside(user_id, greeting["user"])
 
     payload = {**greeting, "confidence": round(similarity, 3)}
+    # Only sent when a brand-new visit row was created — the kiosk uses this
+    # to know whether to prompt for daily_intent (otherwise a busy lab would
+    # nag the same person every recognition cycle).
+    if fresh_visit_id is not None:
+        payload["visit_id"] = fresh_visit_id
     await kiosk_manager.broadcast(
         {"type": "state_change", "state": "GREETING", "payload": payload}
     )

@@ -11,14 +11,14 @@ import {
   initialState,
   reducer,
 } from "@/lib/kioskMachine";
-
-const WS_URL =
-  process.env.NEXT_PUBLIC_BACKEND_WS_URL ?? "ws://localhost:8000/ws/kiosk";
+import { wsUrlFor } from "@/lib/origin";
 
 const GREETING_DWELL_MS = 7000;
 const WELCOME_DWELL_MS = 9000;
 const UNKNOWN_TIMEOUT_MS = 15000;
 const FORM_IDLE_MS = 120000;
+const INTENT_IDLE_MS = 30000;
+const INTENT_SAVED_DWELL_MS = 2200;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -137,6 +137,42 @@ export function useKiosk() {
     armIdle();
   }, [clearTimers, armIdle]);
 
+  const openIntent = useCallback(
+    (visitId: string, userName: string | null) => {
+      clearTimers();
+      dispatch({ type: "OPEN_INTENT", visitId, userName });
+      idleTimer.current = setTimeout(goAmbient, INTENT_IDLE_MS);
+    },
+    [clearTimers, goAmbient],
+  );
+
+  const intentSet = useCallback(
+    (value: string) => {
+      dispatch({ type: "INTENT_SET_TEXT", value });
+      clearTimeout(idleTimer.current);
+      idleTimer.current = setTimeout(goAmbient, INTENT_IDLE_MS);
+    },
+    [goAmbient],
+  );
+
+  const saveIntent = useCallback(async () => {
+    const i = stateRef.current.intent;
+    if (!i.visitId) return;
+    const text = i.text.trim();
+    if (!text) return;
+    dispatch({ type: "SET_BUSY", value: true });
+    try {
+      await api.setVisitIntent(i.visitId, text);
+      dispatch({ type: "INTENT_SAVED" });
+      clearTimeout(idleTimer.current);
+      idleTimer.current = setTimeout(goAmbient, INTENT_SAVED_DWELL_MS);
+    } catch (e) {
+      dispatch({ type: "SET_ERROR", message: (e as Error).message });
+    } finally {
+      dispatch({ type: "SET_BUSY", value: false });
+    }
+  }, [goAmbient]);
+
   const onbSet = useCallback(
     (field: keyof OnboardingData, value: unknown) => {
       dispatch({ type: "ONB_SET", field, value });
@@ -211,7 +247,16 @@ export function useKiosk() {
       if (incoming === "GREETING") {
         clearTimeout(greetingTimer.current);
         dispatch({ type: "SHOW_GREETING", payload });
-        greetingTimer.current = setTimeout(goAmbient, GREETING_DWELL_MS);
+        greetingTimer.current = setTimeout(() => {
+          // After the greeting dwell: if this was a fresh visit, offer the
+          // intent prompt; otherwise drop back to ambient.
+          const g = stateRef.current.greeting;
+          if (g.visit_id && !g.welcome) {
+            openIntent(g.visit_id, g.user?.full_name ?? null);
+          } else {
+            goAmbient();
+          }
+        }, GREETING_DWELL_MS);
       } else if (incoming === "UNKNOWN_PROMPT") {
         if (cur === "UNKNOWN_PROMPT") return;
         const ref = (payload.embedding_ref as string) ?? "";
@@ -222,7 +267,8 @@ export function useKiosk() {
     };
 
     const connect = () => {
-      ws = new WebSocket(WS_URL);
+      const url = wsUrlFor("/ws/kiosk", process.env.NEXT_PUBLIC_BACKEND_WS_URL);
+      ws = new WebSocket(url);
       ws.onopen = () => dispatch({ type: "SET_CONNECTED", value: true });
       ws.onclose = () => {
         dispatch({ type: "SET_CONNECTED", value: false });
@@ -248,7 +294,7 @@ export function useKiosk() {
       clearTimers();
       ws?.close();
     };
-  }, [goAmbient, startVisitor, clearTimers]);
+  }, [goAmbient, startVisitor, clearTimers, openIntent]);
 
   return {
     state,
@@ -262,6 +308,8 @@ export function useKiosk() {
       visSet,
       submitVisitor,
       openProfile,
+      intentSet,
+      saveIntent,
       keepAlive: armIdle,
     },
   };

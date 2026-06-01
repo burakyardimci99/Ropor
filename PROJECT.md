@@ -49,10 +49,16 @@ AI Lab girişinde duran bir sistem. Bir kamera, bir büyük ekran, bir klavye+mo
 
 ## 4. Mimari
 
-Üç ana servis:
-1. **face-service** (Python): kameradan frame, tespit, embedding, en yakın eşleşme; backend'e WS event yayar (`face_detected`, `face_recognized`, `face_unknown`, `face_lost`).
-2. **backend** (FastAPI): iş mantığı, REST, WebSocket; UI'ye state push.
-3. **frontend** (Next.js): kiosk UI, durum makinesi, animasyonlar, klavye etkileşimi.
+Üretim topolojisi (2026-05-26 itibarıyla): kamera Smart TV'ye/kiosk-makinasına bağlı, **frame yakalama tarayıcıda**, **ML server'da**.
+
+```
+[USB Kamera] → [TV browser: getUserMedia, canvas → JPEG her 500ms] ─WS─→ [Server: InsightFace buffalo_l → recognition] ─WS state─→ [TV browser: UI]
+```
+
+Üç ana parça:
+1. **frontend** (Next.js, TV browser): kiosk UI + durum makinesi + **kamera frame yakalama** (`useCamera` hook'u JPEG'leri `/ws/frames`'e gönderir).
+2. **backend** (FastAPI, server): REST + WebSocket; `/ws/frames`'de **InsightFace buffalo_l** ile yüz tespiti + embedding; pgvector ile en yakın komşu eşleştirme; iş mantığı (onboarding/visitor/visit/presence); UI'ye state push.
+3. **face-service** (Python, opsiyonel): kamerasız geliştirme için mock generator. Default'ta kapalı — `docker compose --profile mock up` ile açılır.
 
 ## 5. Veri Modelleri
 
@@ -72,11 +78,11 @@ Bkz. `backend/app/models/` ve Alembic migration. Tablolar: users, face_embedding
 
 ## 8. API Sözleşmesi
 
-face-service → backend (WS) — **evrim (2026-05-25)**: Eşleştirmeyi **backend** yapıyor (DB sahipliği backend'de, face-service ince kalıyor; ayrıca KVKK veri minimizasyonu — kayıt olmayan geçici yüz için DB satırı yazılmaz). Olaylar:
-- `{"type":"face_frame","embedding":[...512],"quality":float}` — kararlı bir yüz görüldüğünde
-- `{"type":"face_lost"}` — kameradan çıkınca
+**Browser → backend frame ingest (2026-05-26)**: TV browser kamerayı `getUserMedia` ile yakalar, her ~500 ms 640×480 JPEG'i `/ws/frames` WebSocket'ine **binary** olarak gönderir. Backend her frame'i InsightFace ile decode edip en büyük yüzü tespit eder, 512-dim embedding üretir ve dahili olarak `face_frame`/`face_lost` event'ini recognition pipeline'ına besler.
 
 Backend pgvector ile en yakın komşuyu bulur: similarity ≥ 0.55 → `GREETING` (visit kaydı, 30dk Redis debounce, presence), aksi halde `UNKNOWN_PROMPT` (embedding 5dk Redis'te `embedding_ref` ile tutulur, kiosk onboarding/visitor başlatır).
+
+**Opsiyonel mock face-service** (Python, kamerasız dev): aynı recognition pipeline'ı `/ws/face-service` üzerinden doğrudan `face_frame` event'leriyle besler. `docker compose --profile mock up` ile açılır.
 
 backend ↔ frontend (REST): `/api/onboarding/{start,update,complete,cancel}`, `/api/visitors/register`, `/api/users/me`, `/api/users/:id`, `/api/leaderboard`, `/api/dashboard/live`, `/api/reservations/*`, `/api/verify`.
 
@@ -97,11 +103,20 @@ Yüz biyometriği özel nitelikli kişisel veri — açık rıza şart. Açık r
 - [x] Frontend state machine + tüm ekranlar (AMBIENT/GREETING/UNKNOWN_PROMPT/ONBOARDING_FORM/VISITOR_MODE) — tarayıcıda uçtan uca doğrulandı
 - [x] KVKK açık rıza metni UI (onboarding adım 5)
 - [x] Profil ekranı (GREETING'de P tuşu): leaderboard opt-out toggle + KVKK veri silme — tarayıcıda doğrulandı
-- [ ] Kiosk deployment (systemd + chromium)
+- [x] Gerçek InsightFace entegrasyonu (browser camera → /ws/frames → buffalo_l server-side)
+- [x] HTTPS reverse proxy (Caddy + tls internal: tek origin, self-signed CA, WSS upgrade dahil)
+- [x] Sunucu boot deployment: systemd unit (`deploy/install.sh`) + `restart: unless-stopped` durable servislerde
+- [x] Admin paneli: token auth (Bearer ADMIN_TOKEN), `/admin` sayfası — kullanıcı listesi (arama/rol/sıralama), detay & edit (rol/aktif/opt-in), KVKK silme, aktif misafir+onboarding oturumları, son ziyaretler, canlı stats
 - [ ] Gerçek InsightFace entegrasyonu (son adım)
 
 ### Faz 2 — Derinleşme
-Rozet/streak, rezervasyon entegrasyonu, daily intent, çıkış animasyonu, düşük-güven akışı, auto-enrollment, admin paneli.
+- [x] Rozet/streak motoru (deklaratif katalog, her visit'te otomatik değerlendirme, achievement WS broadcast)
+- [x] Admin paneli (token auth, kullanıcı CRUD, sessions, visits, badge backfill)
+- [ ] Rezervasyon entegrasyonu (dış API)
+- [ ] Daily intent prompt (greeting sonrası)
+- [ ] Çıkış kapanış animasyonu
+- [ ] Düşük güven 0.45–0.55 "Acaba siz misiniz?" akışı
+- [ ] Auto-enrollment (her başarılı tanımada yeni embedding biriktirme)
 
 ### Faz 3 — Akıllı katman
 LLM concierge, knowledge graph, Slack/email hub, ambient sanat, achievement spotlight, capacity forecast.

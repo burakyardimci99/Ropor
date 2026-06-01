@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
+    admin,
     dashboard,
     leaderboard,
     onboarding,
@@ -8,6 +9,7 @@ from app.api import (
     users,
     verify,
     visitors,
+    visits,
 )
 
 api_router = APIRouter()
@@ -18,3 +20,5 @@ api_router.include_router(leaderboard.router)
 api_router.include_router(dashboard.router)
 api_router.include_router(reservations.router)
 api_router.include_router(verify.router)
+api_router.include_router(visits.router)
+api_router.include_router(admin.router)

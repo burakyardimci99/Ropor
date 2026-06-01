@@ -7,7 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api import api_router
 from app.core.config import settings
 from app.core.redis import redis_client
-from app.ws import face_service, kiosk
+from app.services import face_extractor
+from app.ws import face_service, frames, kiosk
 from app.ws.manager import kiosk_manager
 
 logging.basicConfig(level=settings.log_level)
@@ -21,6 +22,14 @@ async def lifespan(app: FastAPI):
         logger.info("redis connected")
     except Exception:  # noqa: BLE001
         logger.warning("redis not reachable at startup")
+
+    # Warm the face model in a background thread so the first /ws/frames
+    # message doesn't pay the ~3-5s load cost.
+    if settings.face_extractor_eager_warm:
+        import asyncio
+
+        asyncio.create_task(asyncio.to_thread(face_extractor.warm))
+
     yield
     await redis_client.aclose()
 
@@ -44,6 +53,7 @@ app.add_middleware(
 app.include_router(api_router)
 app.include_router(face_service.router)
 app.include_router(kiosk.router)
+app.include_router(frames.router)
 
 
 @app.get("/health", tags=["meta"])

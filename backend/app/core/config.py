@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     face_match_threshold: float = 0.55
     face_unknown_threshold: float = 0.45
     visit_debounce_minutes: int = 30
+    # Eagerly load InsightFace at startup. Disable for fast cold-starts during dev.
+    face_extractor_eager_warm: bool = True
+
+    # Admin panel: empty disables the panel entirely (503 from admin endpoints).
+    admin_token: str = ""
 
     # Email
     email_backend: str = "mock"  # mock | smtp

@@ -1,0 +1,41 @@
+# AI Lab Giriş Sistemi — reverse proxy.
+#
+# Both frontend and backend are served behind one HTTPS origin so the kiosk
+# browser sees a single URL (no CORS) and getUserMedia gets a secure context.
+# `tls internal` makes Caddy generate a local CA and self-signed certificates
+# for the listed hostnames automatically. The CA cert can be exported from
+# the `caddy_data` volume to be trusted on the TV (see README).
+#
+# Add your server's hostname/IP to the site address line below when deploying.
+
+{
+	# Local CA mode (no ACME). Issues self-signed certs trusted by clients
+	# that install the Caddy root.
+	local_certs
+}
+
+# Redirect plain HTTP to HTTPS so the kiosk URL works without the protocol.
+http:// {
+	redir https://{host}{uri} permanent
+}
+
+# Listed hostnames get an auto-issued self-signed cert.
+# To add your server's IP/hostname, append it here (e.g. lab.example.com, 192.168.1.50).
+localhost, 127.0.0.1, host.docker.internal {
+	tls internal
+
+	# Larger upload allowance for camera frames.
+	request_body {
+		max_size 5MB
+	}
+
+	# API + docs + health + WebSockets -> backend.
+	# reverse_proxy handles WebSocket upgrade headers automatically.
+	@backend {
+		path /api/* /ws/* /health /docs /openapi.json /redoc
+	}
+	reverse_proxy @backend backend:8000
+
+	# Everything else (Next.js pages, _next/* static + HMR) -> frontend.
+	reverse_proxy frontend:3000
+}

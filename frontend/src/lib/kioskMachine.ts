@@ -4,7 +4,8 @@ export type Screen =
   | "UNKNOWN_PROMPT"
   | "ONBOARDING_FORM"
   | "VISITOR_MODE"
-  | "PROFILE";
+  | "PROFILE"
+  | "INTENT_PROMPT";
 
 export interface GreetingPayload {
   message?: string;
@@ -14,6 +15,8 @@ export interface GreetingPayload {
   current_reservation?: { resource_name: string } | null;
   user?: { id?: string; full_name?: string; role?: string; interests?: string[] };
   welcome?: boolean;
+  /** Set only on the visit that the kiosk should optionally tag with intent. */
+  visit_id?: string;
 }
 
 export type Role = "researcher" | "student" | "staff" | "guest";
@@ -33,6 +36,13 @@ export interface VisitorData {
   purpose: string;
 }
 
+export interface IntentData {
+  visitId: string | null;
+  userName: string | null;
+  text: string;
+  saved: boolean;
+}
+
 export interface KioskState {
   screen: Screen;
   connected: boolean;
@@ -41,6 +51,7 @@ export interface KioskState {
   profileUserId: string | null;
   onboarding: OnboardingData;
   visitor: VisitorData;
+  intent: IntentData;
   error: string | null;
   busy: boolean;
 }
@@ -64,6 +75,13 @@ export const initialOnboarding: OnboardingData = {
   kvkk: false,
 };
 
+const initialIntent: IntentData = {
+  visitId: null,
+  userName: null,
+  text: "",
+  saved: false,
+};
+
 export const initialState: KioskState = {
   screen: "AMBIENT",
   connected: false,
@@ -72,6 +90,7 @@ export const initialState: KioskState = {
   profileUserId: null,
   onboarding: initialOnboarding,
   visitor: { visitor_name: "", purpose: "" },
+  intent: initialIntent,
   error: null,
   busy: false,
 };
@@ -87,6 +106,9 @@ export type Action =
   | { type: "BEGIN_VISITOR" }
   | { type: "VIS_SET"; field: keyof VisitorData; value: string }
   | { type: "OPEN_PROFILE"; userId: string }
+  | { type: "OPEN_INTENT"; visitId: string; userName: string | null }
+  | { type: "INTENT_SET_TEXT"; value: string }
+  | { type: "INTENT_SAVED" }
   | { type: "SET_ERROR"; message: string | null }
   | { type: "SET_BUSY"; value: boolean };
 
@@ -115,6 +137,7 @@ export function reducer(state: KioskState, action: Action): KioskState {
         profileUserId: null,
         onboarding: initialOnboarding,
         visitor: { visitor_name: "", purpose: "" },
+        intent: initialIntent,
         error: null,
         busy: false,
       };
@@ -126,6 +149,25 @@ export function reducer(state: KioskState, action: Action): KioskState {
         profileUserId: action.userId,
         error: null,
       };
+
+    case "OPEN_INTENT":
+      return {
+        ...state,
+        screen: "INTENT_PROMPT",
+        intent: {
+          visitId: action.visitId,
+          userName: action.userName,
+          text: "",
+          saved: false,
+        },
+        error: null,
+      };
+
+    case "INTENT_SET_TEXT":
+      return { ...state, intent: { ...state.intent, text: action.value } };
+
+    case "INTENT_SAVED":
+      return { ...state, intent: { ...state.intent, saved: true } };
 
     case "BEGIN_ONBOARDING":
       return {
@@ -178,4 +220,5 @@ export const LOCKED_SCREENS: Screen[] = [
   "ONBOARDING_FORM",
   "VISITOR_MODE",
   "PROFILE",
+  "INTENT_PROMPT",
 ];

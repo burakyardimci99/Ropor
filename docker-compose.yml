@@ -1,6 +1,7 @@
 services:
   postgres:
     image: pgvector/pgvector:pg16
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-lab}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-lab_dev_password}
@@ -17,6 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
     healthcheck:
@@ -29,6 +31,7 @@ services:
     build:
       context: .
       dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
     env_file: .env
     ports:
       - "8000:8000"
@@ -40,7 +43,11 @@ services:
       redis:
         condition: service_healthy
 
+  # Python mock face-service: only used for headless demos / dev without a
+  # camera. The real pipeline is browser camera -> backend /ws/frames.
+  # Run with: docker compose --profile mock up
   face-service:
+    profiles: ["mock"]
     build:
       context: .
       dockerfile: docker/face-service.Dockerfile
@@ -55,6 +62,7 @@ services:
     build:
       context: .
       dockerfile: docker/frontend.Dockerfile
+    restart: unless-stopped
     env_file: .env
     ports:
       - "3000:3000"
@@ -66,7 +74,27 @@ services:
       backend:
         condition: service_started
 
+  # HTTPS reverse proxy: single origin for the TV browser, self-signed cert
+  # (local CA managed by Caddy in the caddy_data volume).
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_started
+      frontend:
+        condition: service_started
+
 volumes:
   pgdata:
   frontend_node_modules:
   frontend_next:
+  caddy_data:
+  caddy_config:

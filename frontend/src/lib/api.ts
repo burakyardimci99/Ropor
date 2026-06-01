@@ -1,5 +1,7 @@
-const BASE =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+import { restBase } from "@/lib/origin";
+
+// Empty BASE = same-origin (relative URLs), e.g. when fronted by Caddy.
+const BASE = restBase(process.env.NEXT_PUBLIC_BACKEND_URL);
 
 async function post<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
@@ -107,6 +109,9 @@ export const api = {
     get<LeaderboardEntry[]>("/api/leaderboard?period=monthly&limit=10"),
 
   live: () => get<LiveDashboard>("/api/dashboard/live"),
+
+  setVisitIntent: (visit_id: string, intent: string) =>
+    post<{ status: string }>(`/api/visits/${visit_id}/intent`, { intent }),
 
   getProfile: (id: string) => get<UserProfile>(`/api/users/${id}/profile`),
 

@@ -3,11 +3,13 @@
 import { AnimatePresence, motion } from "framer-motion";
 
 import { AmbientScreen } from "@/components/AmbientScreen";
+import { CameraBlocker, CameraIndicator } from "@/components/CameraStatus";
 import { GreetingScreen } from "@/components/GreetingScreen";
 import { OnboardingForm } from "@/components/OnboardingForm";
 import { ProfileScreen } from "@/components/ProfileScreen";
 import { UnknownPrompt } from "@/components/UnknownPrompt";
 import { VisitorMode } from "@/components/VisitorMode";
+import { useCamera } from "@/hooks/useCamera";
 import { useKiosk } from "@/hooks/useKiosk";
 import { Screen } from "@/lib/kioskMachine";
 
@@ -22,6 +24,7 @@ const BG: Record<Screen, string> = {
 
 export default function Home() {
   const { state, actions } = useKiosk();
+  const { status: camera, retry: retryCamera } = useCamera();
 
   return (
     <main className="relative h-screen w-screen overflow-hidden">
@@ -35,13 +38,16 @@ export default function Home() {
       <div className="absolute left-5 top-5 z-20 text-xs text-white/40">
         🔴 Yüz tanıma aktif · detay için QR
       </div>
-      <div
-        className={`absolute right-5 top-5 z-20 flex items-center gap-2 rounded-full px-3 py-1 text-xs ${
-          state.connected ? "bg-emerald-600/80" : "bg-red-700/80"
-        }`}
-      >
-        <span className="h-2 w-2 rounded-full bg-white" />
-        {state.connected ? "bağlı" : "bağlantı yok"}
+      <div className="absolute right-5 top-5 z-20 flex items-center gap-2">
+        <CameraIndicator status={camera} onRetry={retryCamera} />
+        <div
+          className={`flex items-center gap-2 rounded-full px-3 py-1 text-xs ${
+            state.connected ? "bg-emerald-600/80" : "bg-red-700/80"
+          }`}
+        >
+          <span className="h-2 w-2 rounded-full bg-white" />
+          {state.connected ? "bağlı" : "bağlantı yok"}
+        </div>
       </div>
 
       <div className="relative z-10 h-full w-full">
@@ -92,6 +98,8 @@ export default function Home() {
           )}
         </AnimatePresence>
       </div>
+
+      <CameraBlocker status={camera} onRetry={retryCamera} />
     </main>
   );
 }
