@@ -38,50 +38,65 @@ def warm() -> None:
     _load()
 
 
-def get_face_values(jpeg_bytes: bytes) -> dict | None:
-    """Decode a JPEG frame and return the largest face's box, embedding and quality.
+def get_all_faces(jpeg_bytes: bytes) -> list[dict]:
+    """Decode a JPEG frame and return every detected face, largest-first.
 
-    Returns ``None`` if the bytes don't decode or no face is found. The box is in
-    the frame's own pixel coordinates so the kiosk can scale it onto its preview::
+    Returns an empty list if the bytes don't decode or no face is found. Each
+    box is in the frame's own pixel coordinates so the kiosk can scale it onto
+    its preview. Faces are sorted by bounding-box area (descending) so the first
+    entry is the closest person::
 
-        {
+        [{
           "box": {"x", "y", "w", "h", "frame_w", "frame_h"},
           "embedding": [...512],
           "quality": float,
-        }
+        }, ...]
     """
     if not jpeg_bytes:
-        return None
+        return []
     arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
-        return None
+        return []
 
     app = _load()
     faces = app.get(img)
     if not faces:
-        return None
+        return []
 
-    # Pick the largest face by bounding-box area.
     def area(f) -> float:
         x1, y1, x2, y2 = f.bbox
         return (x2 - x1) * (y2 - y1)
 
-    f = max(faces, key=area)
-    x1, y1, x2, y2 = (float(v) for v in f.bbox)
     frame_h, frame_w = img.shape[:2]
-    return {
-        "box": {
-            "x": x1,
-            "y": y1,
-            "w": x2 - x1,
-            "h": y2 - y1,
-            "frame_w": int(frame_w),
-            "frame_h": int(frame_h),
-        },
-        "embedding": f.normed_embedding.astype(float).tolist(),
-        "quality": float(getattr(f, "det_score", 0.0)),
-    }
+    out: list[dict] = []
+    for f in sorted(faces, key=area, reverse=True):
+        x1, y1, x2, y2 = (float(v) for v in f.bbox)
+        out.append(
+            {
+                "box": {
+                    "x": x1,
+                    "y": y1,
+                    "w": x2 - x1,
+                    "h": y2 - y1,
+                    "frame_w": int(frame_w),
+                    "frame_h": int(frame_h),
+                },
+                "embedding": f.normed_embedding.astype(float).tolist(),
+                "quality": float(getattr(f, "det_score", 0.0)),
+            }
+        )
+    return out
+
+
+def get_face_values(jpeg_bytes: bytes) -> dict | None:
+    """Decode a JPEG frame and return the largest face's box, embedding and quality.
+
+    Thin wrapper over :func:`get_all_faces` for callers that only need the
+    closest face. Returns ``None`` if the bytes don't decode or no face is found.
+    """
+    faces = get_all_faces(jpeg_bytes)
+    return faces[0] if faces else None
 
 
 def extract(jpeg_bytes: bytes) -> tuple[list[float] | None, float | None]:

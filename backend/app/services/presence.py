@@ -16,6 +16,8 @@ VISIT_DEBOUNCE_TTL = settings.visit_debounce_minutes * 60
 GREET_COOLDOWN_TTL = settings.greet_cooldown_seconds
 PRESENCE_TTL = 300  # 5 min FOV window for "currently inside"
 UNKNOWN_EMB_TTL = 300
+CONFIRM_WINDOW_TTL = settings.face_confirm_window_seconds
+UNKNOWN_SEEN_KEY = "unknown_seen"
 
 
 async def should_record_visit(user_id: UUID) -> bool:
@@ -40,6 +42,44 @@ async def should_greet(user_id: UUID) -> bool:
     key = f"greeted:{user_id}"
     was_set = await redis_client.set(key, "1", ex=GREET_COOLDOWN_TTL, nx=True)
     return bool(was_set)
+
+
+async def bump_seen(user_id: UUID) -> int:
+    """Count consecutive frames a known face has been seen; return the new total.
+
+    Each call increments a short-lived per-user counter and refreshes its TTL.
+    When the face leaves the frame the counter expires on its own, so a fresh
+    arrival starts counting from 1 again. The recognition pipeline only greets
+    once this crosses ``face_confirm_frames``.
+    """
+    key = f"seen:{user_id}"
+    count = await redis_client.incr(key)
+    await redis_client.expire(key, CONFIRM_WINDOW_TTL)
+    return count
+
+
+async def bump_unknown_seen() -> int:
+    """Count consecutive frames an unknown face has driven the screen.
+
+    Mirrors :func:`bump_seen` for the no-identity case: a stranger standing in
+    front of the camera produces consecutive unknown frames, and we only switch
+    to the registration screen once this crosses ``unknown_confirm_frames``.
+    """
+    count = await redis_client.incr(UNKNOWN_SEEN_KEY)
+    await redis_client.expire(UNKNOWN_SEEN_KEY, CONFIRM_WINDOW_TTL)
+    return count
+
+
+async def reset_unknown_seen() -> None:
+    """Drop the unknown streak (e.g. once a known face takes over the screen)."""
+    await redis_client.delete(UNKNOWN_SEEN_KEY)
+
+
+async def clear_confirmations() -> None:
+    """Reset all frame-confirmation counters — called when the face is lost."""
+    await redis_client.delete(UNKNOWN_SEEN_KEY)
+    async for key in redis_client.scan_iter(match="seen:*"):
+        await redis_client.delete(key)
 
 
 async def mark_inside(user_id: UUID, mini: dict) -> None:

@@ -31,9 +31,18 @@ class Settings(BaseSettings):
     face_unknown_threshold: float = 0.45
     visit_debounce_minutes: int = 30
     # Re-show the welcome screen for a recognized user at most once per this
-    # window. Prevents the continuous face-frame stream from re-triggering the
-    # greeting every frame (which kept the kiosk stuck on the welcome screen).
-    greet_cooldown_seconds: int = 90
+    # window. If a face already entered within this window we stay silent
+    # instead of greeting again. Prevents the continuous face-frame stream from
+    # re-triggering the greeting every frame.
+    greet_cooldown_seconds: int = 600  # 10 dk
+    # Frame-confirmation gates: a face must be seen this many times within
+    # ``face_confirm_window_seconds`` before we act, which filters out
+    # single-frame false matches. At ~2 fps these are ~1.5-2s of presence.
+    face_confirm_frames: int = 3  # tanınan yüz: kaç kare sonra hoşgeldin
+    unknown_confirm_frames: int = 4  # bilinmeyen yüz: kaç kare sonra kayıt ekranı
+    # Sliding window the confirmation counters live in; resets if the face
+    # leaves the frame for longer than this.
+    face_confirm_window_seconds: int = 4
     # Eagerly load InsightFace at startup. Disable for fast cold-starts during dev.
     face_extractor_eager_warm: bool = True
 

@@ -55,6 +55,12 @@ def _random_embedding(dim: int) -> list[float]:
     return vec.tolist()
 
 
+# Frames emitted per simulated visit. A real camera streams the same face for
+# many consecutive frames; the backend now requires several before it greets or
+# opens registration, so a single frame would never cross those thresholds.
+MOCK_FRAMES_PER_VISIT = 5
+
+
 class MockRecognizer:
     """Simulates people arriving and leaving the camera's field of view."""
 
@@ -66,12 +72,18 @@ class MockRecognizer:
 
     def _one_visit(self) -> list[FaceEvent]:
         returning = random.random() < self.known_ratio
+        # Same person across the whole visit -> reuse one embedding for every
+        # frame so the backend's frame-confirmation counters add up.
         embedding = self._known if returning else _random_embedding(self.dim)
-        quality = round(random.uniform(0.6, 0.95), 3)
-        return [
-            FaceEvent("face_frame", {"embedding": embedding, "quality": quality}),
-            FaceEvent("face_lost", {}),
+        events: list[FaceEvent] = [
+            FaceEvent(
+                "face_frame",
+                {"embedding": embedding, "quality": round(random.uniform(0.6, 0.95), 3)},
+            )
+            for _ in range(MOCK_FRAMES_PER_VISIT)
         ]
+        events.append(FaceEvent("face_lost", {}))
+        return events
 
     def events(self) -> Iterator[FaceEvent]:
         import time

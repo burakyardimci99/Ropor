@@ -20,7 +20,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.services import face_extractor
-from app.services.recognition import handle_face_event
+from app.services.recognition import handle_face_event, handle_frame_faces
 
 logger = logging.getLogger("ws.frames")
 
@@ -41,28 +41,24 @@ def get_face_box_payload(box: dict | None, name: str | None) -> dict:
     return {"type": "face_box", "box": box, "name": name}
 
 
-def get_detected_face(jpeg_bytes: bytes) -> dict | None:
-    """Detect the largest face in a JPEG frame; return its box/embedding/quality.
+def get_detected_faces(jpeg_bytes: bytes) -> list[dict]:
+    """Detect every face in a JPEG frame; return their boxes/embeddings/quality.
 
-    Returns ``None`` when the bytes don't decode or no face is found. Detection +
-    embedding are CPU-heavy, so callers should run this off the event loop.
+    Returns an empty list when the bytes don't decode or no face is found, and
+    is ordered largest-first so the closest person leads. Detection + embedding
+    are CPU-heavy, so callers should run this off the event loop.
     """
-    return face_extractor.get_face_values(jpeg_bytes)
+    return face_extractor.get_all_faces(jpeg_bytes)
 
 
-async def get_recognized_name(face: dict) -> str | None:
-    """Run a detected face through recognition and return its matched name.
+async def get_recognized_name(faces: list[dict]) -> str | None:
+    """Run all detected faces through recognition; return the closest's name.
 
-    Returns the recognized full name, or ``None`` when the face is unknown. Side
-    effect: recognition broadcasts the kiosk state change (greeting / prompt).
+    Returns the closest (driver) face's recognized full name, or ``None`` when
+    it is unknown. Side effect: recognition records every face's visit and may
+    broadcast a kiosk state change (greeting / registration) for the driver.
     """
-    return await handle_face_event(
-        {
-            "type": "face_frame",
-            "embedding": face["embedding"],
-            "quality": face["quality"],
-        }
-    )
+    return await handle_frame_faces(faces)
 
 
 @router.websocket("/ws/frames")
@@ -75,9 +71,9 @@ async def frames_ws(ws: WebSocket) -> None:
             data = await ws.receive_bytes()
 
             # Detection + embedding are CPU-heavy → run off the event loop.
-            face = await asyncio.to_thread(get_detected_face, data)
+            faces = await asyncio.to_thread(get_detected_faces, data)
 
-            if face is None:
+            if not faces:
                 consecutive_empty += 1
                 # Clear the kiosk overlay immediately on the first empty frame.
                 if consecutive_empty == 1:
@@ -88,8 +84,9 @@ async def frames_ws(ws: WebSocket) -> None:
                 continue
 
             consecutive_empty = 0
-            name = await get_recognized_name(face)
-            await ws.send_json(get_face_box_payload(face["box"], name))
+            # Recognition evaluates every face; the preview labels the closest.
+            name = await get_recognized_name(faces)
+            await ws.send_json(get_face_box_payload(faces[0]["box"], name))
     except WebSocketDisconnect:
         logger.info("camera client disconnected")
     except Exception:  # noqa: BLE001

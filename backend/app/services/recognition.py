@@ -4,6 +4,14 @@ broadcasts kiosk state transitions.
 Contract (face-service -> backend):
   {"type": "face_frame", "embedding": [...512], "quality": 0.9}
   {"type": "face_lost"}
+
+A single frame can contain several faces. ``handle_frame_faces`` evaluates all
+of them: the largest (closest) face "drives" the kiosk screen, while the rest
+only get their visit/presence recorded. To filter single-frame false matches we
+require a face to be seen across several consecutive frames before acting — a
+recognized face is greeted after ``face_confirm_frames`` and at most once per
+``greet_cooldown_seconds`` window, while an unrecognized face switches the kiosk
+to the registration screen after ``unknown_confirm_frames``.
 """
 import logging
 from typing import Any
@@ -20,15 +28,22 @@ logger = logging.getLogger("services.recognition")
 
 
 async def handle_face_event(event: dict[str, Any]) -> str | None:
-    """Process a face event and return the recognized full name, if any.
+    """Process a single-face event and return the recognized full name, if any.
 
-    The name is used by the frame socket to label the live face box; ``None``
-    means the face was unknown or the event wasn't a frame.
+    Used by the face-service ingest (one embedding per message). The name is
+    used to label the live face box; ``None`` means the face was unknown or the
+    event wasn't a frame.
     """
     event_type = event.get("type")
     if event_type == "face_frame":
-        return await _handle_frame(event)
+        embedding = event.get("embedding")
+        if not isinstance(embedding, list):
+            logger.warning("face_frame missing embedding")
+            return None
+        name, _ = await _process_face(embedding, event.get("quality"), drive_screen=True)
+        return name
     elif event_type == "face_lost":
+        await presence.clear_confirmations()
         await kiosk_manager.broadcast(
             {"type": "state_change", "state": "AMBIENT", "payload": {}}
         )
@@ -38,32 +53,52 @@ async def handle_face_event(event: dict[str, Any]) -> str | None:
         return None
 
 
-async def _handle_frame(event: dict[str, Any]) -> str | None:
-    embedding = event.get("embedding")
-    if not isinstance(embedding, list):
-        logger.warning("face_frame missing embedding")
-        return None
-    quality = event.get("quality")
+async def handle_frame_faces(faces: list[dict[str, Any]]) -> str | None:
+    """Evaluate every face in a camera frame; return the driver's matched name.
 
+    ``faces`` is ordered largest-first. The first (closest) face drives the
+    kiosk screen — greeting or registration — while the others only have their
+    visit and presence recorded. The returned name labels the preview box drawn
+    over that driver face.
+    """
+    if not faces:
+        return None
+    driver, *rest = faces
+    name, _ = await _process_face(
+        driver["embedding"], driver.get("quality"), drive_screen=True
+    )
+    for face in rest:
+        await _process_face(face["embedding"], face.get("quality"), drive_screen=False)
+    return name
+
+
+async def _process_face(
+    embedding: list[float], quality, *, drive_screen: bool
+) -> tuple[str | None, str]:
+    """Match one face and apply its side effects.
+
+    ``drive_screen`` is True only for the closest face in a frame — that one may
+    trigger a kiosk state change (greeting / registration). Other faces still
+    record their visit and presence but never move the screen. Returns
+    ``(recognized_name, status)`` where status is ``"known"`` or ``"unknown"``.
+    """
     async with AsyncSessionLocal() as session:
         match = await find_nearest(session, embedding)
 
         if match.user_id is not None and match.similarity >= settings.face_match_threshold:
-            return await _on_recognized(session, match.user_id, match.similarity, quality)
+            name = await _on_recognized(
+                session, match.user_id, match.similarity, quality, drive_screen
+            )
+            return name, "known"
 
-    # Not recognized -> stash embedding so the kiosk can start onboarding/visitor.
-    ref = await presence.cache_unknown_embedding(embedding)
-    logger.info("unknown face (best sim=%.3f) -> ref %s", match.similarity, ref)
-    await kiosk_manager.broadcast(
-        {
-            "type": "state_change",
-            "state": "UNKNOWN_PROMPT",
-            "payload": {"embedding_ref": ref, "quality": quality},
-        }
-    )
+    if drive_screen:
+        await _on_unknown(embedding, quality, match.similarity)
+    return None, "unknown"
 
 
-async def _on_recognized(session, user_id, similarity: float, quality) -> str | None:
+async def _on_recognized(
+    session, user_id, similarity: float, quality, drive_screen: bool
+) -> str | None:
     user = await session.get(User, user_id)
     if user is None or not user.is_active:
         return None
@@ -96,9 +131,22 @@ async def _on_recognized(session, user_id, similarity: float, quality) -> str | 
 
     await presence.mark_inside(user_id, mini)
 
-    # Greet at most once per cooldown window. The face service streams frames
-    # continuously, so without this the welcome screen would be re-broadcast
-    # every frame and never time out back to ambient.
+    # Only the closest face moves the screen; the rest are just recorded above.
+    if not drive_screen:
+        return user.full_name
+
+    # A known face is on screen, so any unknown streak is stale — drop it.
+    await presence.reset_unknown_seen()
+
+    # Require a few consecutive frames before greeting, to filter out a stray
+    # single-frame false match.
+    if await presence.bump_seen(user_id) < settings.face_confirm_frames:
+        return user.full_name
+
+    # Greet at most once per cooldown window: if this face already entered
+    # within the last `greet_cooldown_seconds`, stay silent. The face service
+    # streams frames continuously, so without this the welcome screen would be
+    # re-broadcast every frame and never time out back to ambient.
     if not await presence.should_greet(user_id):
         return user.full_name
 
@@ -116,3 +164,31 @@ async def _on_recognized(session, user_id, similarity: float, quality) -> str | 
         {"type": "state_change", "state": "GREETING", "payload": payload}
     )
     return user.full_name
+
+
+async def _on_unknown(embedding: list[float], quality, similarity: float) -> None:
+    """Count consecutive unknown frames; open registration once confirmed.
+
+    Fires exactly once when the streak first reaches ``unknown_confirm_frames``
+    (the kiosk ignores repeats while already on the registration screen). The
+    streak resets via TTL when the person leaves, or explicitly on ``face_lost``.
+    """
+    seen = await presence.bump_unknown_seen()
+    if seen != settings.unknown_confirm_frames:
+        return
+
+    # Confirmed unknown -> stash embedding so the kiosk can start onboarding.
+    ref = await presence.cache_unknown_embedding(embedding)
+    logger.info(
+        "unknown face confirmed after %d frames (best sim=%.3f) -> ref %s",
+        seen,
+        similarity,
+        ref,
+    )
+    await kiosk_manager.broadcast(
+        {
+            "type": "state_change",
+            "state": "UNKNOWN_PROMPT",
+            "payload": {"embedding_ref": ref, "quality": quality},
+        }
+    )
