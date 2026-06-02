@@ -10,3 +10,8 @@ router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 @router.get("/live")
 async def live(session: AsyncSession = Depends(get_session)) -> dict:
     return await dashboard.live(session)
+
+
+@router.get("/density")
+async def density(session: AsyncSession = Depends(get_session)) -> dict:
+    return await dashboard.weekly_density(session)

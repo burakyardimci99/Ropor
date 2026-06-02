@@ -1,8 +1,8 @@
 "use client";
 
-import { motion } from "framer-motion";
 import { useEffect, useRef } from "react";
 
+import { FormCard, btnGhostStyle, btnPrimaryStyle, fieldInputCls } from "@/components/kiosk/visuals";
 import { KioskState } from "@/lib/kioskMachine";
 
 interface Props {
@@ -29,51 +29,48 @@ export function VisitorMode({ state, onSet, onSubmit, onCancel }: Props) {
   }, [onCancel]);
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -20 }}
-      className="mx-auto flex h-full w-full max-w-2xl flex-col justify-center px-12"
-    >
-      <h1 className="text-5xl font-bold">Misafir Girişi</h1>
-      <p className="mt-3 text-xl text-white/50">Hoş geldiniz! Birkaç bilgi alalım.</p>
+    <FormCard maxWidth={1000}>
+      <div style={{ fontSize: "26px", letterSpacing: ".28em", color: "var(--blue-bright)", fontWeight: 600 }}>
+        MİSAFİR GİRİŞİ
+      </div>
+      <h1 className="font-display" style={{ fontSize: "72px", fontWeight: 700, color: "#FFFFFF", marginTop: "8px" }}>
+        Hoş geldiniz
+      </h1>
+      <p style={{ fontSize: "28px", color: "#7FB2E6", marginTop: "6px" }}>Birkaç bilgi alalım, hemen içeri buyurun.</p>
 
-      <label className="mt-10 block text-2xl font-semibold">Adınız</label>
+      <label style={{ display: "block", fontSize: "30px", fontWeight: 600, color: "#CFE6FF", marginTop: "44px", marginBottom: "14px" }}>
+        Adınız
+      </label>
       <input
         ref={inputRef}
         value={visitor.visitor_name}
         onChange={(e) => onSet("visitor_name", e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onSubmit()}
         placeholder="Mehmet Demir"
-        className={inputCls}
+        className={fieldInputCls}
       />
 
-      <label className="mt-6 block text-2xl font-semibold">
-        Ziyaret amacı / kimi ziyaret <span className="text-white/40">(opsiyonel)</span>
+      <label style={{ display: "block", fontSize: "30px", fontWeight: 600, color: "#CFE6FF", marginTop: "28px", marginBottom: "14px" }}>
+        Ziyaret amacı / kimi ziyaret <span style={{ color: "#5E86B5" }}>(opsiyonel)</span>
       </label>
       <input
         value={visitor.purpose}
         onChange={(e) => onSet("purpose", e.target.value)}
         onKeyDown={(e) => e.key === "Enter" && onSubmit()}
         placeholder="Toplantı · Ahmet Hoca"
-        className={inputCls}
+        className={fieldInputCls}
       />
 
-      {error && <p className="mt-6 text-xl text-red-400">{error}</p>}
+      {error && <p style={{ marginTop: "24px", fontSize: "26px", color: "#FCA5A5" }}>{error}</p>}
 
-      <div className="mt-10 flex items-center justify-between">
-        <span className="text-white/50">[Esc] iptal</span>
-        <button
-          onClick={onSubmit}
-          disabled={busy}
-          className="rounded-xl bg-violet-600 px-8 py-3 text-xl font-semibold transition hover:bg-violet-500 disabled:opacity-50"
-        >
-          Giriş Yap <span className="text-white/60">[Enter]</span>
+      <div className="flex items-center justify-between" style={{ marginTop: "48px" }}>
+        <button onClick={onCancel} style={btnGhostStyle}>
+          İptal <span style={{ opacity: 0.55, marginLeft: "8px" }}>[Esc]</span>
+        </button>
+        <button onClick={onSubmit} disabled={busy} style={{ ...btnPrimaryStyle, opacity: busy ? 0.5 : 1 }}>
+          Giriş Yap <span style={{ opacity: 0.6, marginLeft: "8px" }}>[Enter]</span>
         </button>
       </div>
-    </motion.div>
+    </FormCard>
   );
 }
-
-const inputCls =
-  "mt-3 w-full rounded-xl border border-white/10 bg-white/5 px-6 py-4 text-2xl outline-none focus:border-violet-400";

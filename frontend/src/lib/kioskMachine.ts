@@ -1,5 +1,6 @@
 export type Screen =
   | "AMBIENT"
+  | "SCANNING"
   | "GREETING"
   | "UNKNOWN_PROMPT"
   | "ONBOARDING_FORM"
@@ -11,6 +12,8 @@ export interface GreetingPayload {
   message?: string;
   visit_count?: number;
   badge_count?: number;
+  /** Consecutive days visited (lab timezone), including today. 1 = today only. */
+  streak_days?: number;
   confidence?: number;
   current_reservation?: { resource_name: string } | null;
   user?: { id?: string; full_name?: string; role?: string; interests?: string[] };
@@ -97,6 +100,7 @@ export const initialState: KioskState = {
 
 export type Action =
   | { type: "SET_CONNECTED"; value: boolean }
+  | { type: "SHOW_SCANNING" }
   | { type: "SHOW_GREETING"; payload: GreetingPayload }
   | { type: "SHOW_UNKNOWN"; embeddingRef: string }
   | { type: "GO_AMBIENT" }
@@ -116,6 +120,9 @@ export function reducer(state: KioskState, action: Action): KioskState {
   switch (action.type) {
     case "SET_CONNECTED":
       return { ...state, connected: action.value };
+
+    case "SHOW_SCANNING":
+      return { ...state, screen: "SCANNING", error: null };
 
     case "SHOW_GREETING":
       return { ...state, screen: "GREETING", greeting: action.payload, error: null };

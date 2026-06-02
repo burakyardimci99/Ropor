@@ -30,8 +30,15 @@ class Settings(BaseSettings):
     face_match_threshold: float = 0.55
     face_unknown_threshold: float = 0.45
     visit_debounce_minutes: int = 30
+    # Re-show the welcome screen for a recognized user at most once per this
+    # window. Prevents the continuous face-frame stream from re-triggering the
+    # greeting every frame (which kept the kiosk stuck on the welcome screen).
+    greet_cooldown_seconds: int = 90
     # Eagerly load InsightFace at startup. Disable for fast cold-starts during dev.
     face_extractor_eager_warm: bool = True
+
+    # Local timezone used for day-based stats (e.g. visit streaks).
+    lab_timezone: str = "Europe/Istanbul"
 
     # Admin panel: empty disables the panel entirely (503 from admin endpoints).
     admin_token: str = ""

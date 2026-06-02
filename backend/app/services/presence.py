@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.redis import redis_client
 
 VISIT_DEBOUNCE_TTL = settings.visit_debounce_minutes * 60
+GREET_COOLDOWN_TTL = settings.greet_cooldown_seconds
 PRESENCE_TTL = 300  # 5 min FOV window for "currently inside"
 UNKNOWN_EMB_TTL = 300
 
@@ -25,6 +26,20 @@ async def should_record_visit(user_id: UUID) -> bool:
         return True
     await redis_client.expire(key, VISIT_DEBOUNCE_TTL)
     return False
+
+
+async def should_greet(user_id: UUID) -> bool:
+    """True once per greet-cooldown window for a user.
+
+    The face service streams frames continuously while someone stands in front
+    of the camera. Without this gate the backend would broadcast a GREETING on
+    every frame and the kiosk would never leave the welcome screen. Unlike the
+    visit debounce, the window is NOT refreshed on each frame: it expires on its
+    own, so a person who genuinely leaves and returns later is greeted again.
+    """
+    key = f"greeted:{user_id}"
+    was_set = await redis_client.set(key, "1", ex=GREET_COOLDOWN_TTL, nx=True)
+    return bool(was_set)
 
 
 async def mark_inside(user_id: UUID, mini: dict) -> None:

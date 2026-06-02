@@ -1,11 +1,31 @@
 """Builds the contextual greeting payload for a recognized user."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models import Reservation, User, UserBadge, Visit
+
+
+async def _visit_streak_days(session: AsyncSession, user_id: UUID, today) -> int:
+    """Consecutive calendar days (lab timezone) the user has visited, including
+    today's arrival. 1 means "here today only", 2 means "today + yesterday", etc.
+    """
+    tz = ZoneInfo(settings.lab_timezone)
+    rows = await session.execute(
+        select(Visit.entered_at).where(Visit.user_id == user_id)
+    )
+    visit_days = {dt.astimezone(tz).date() for (dt,) in rows if dt is not None}
+
+    streak = 1  # the current arrival counts as today
+    day = today - timedelta(days=1)
+    while day in visit_days:
+        streak += 1
+        day -= timedelta(days=1)
+    return streak
 
 
 async def build_greeting(session: AsyncSession, user_id: UUID) -> dict | None:
@@ -47,15 +67,21 @@ async def build_greeting(session: AsyncSession, user_id: UUID) -> dict | None:
         )
     ) or 0
 
+    today_local = now.astimezone(ZoneInfo(settings.lab_timezone)).date()
+    streak_days = await _visit_streak_days(session, user_id, today_local)
+
     first_name = user.full_name.split(" ")[0]
     ordinal = visit_count + 1  # this arrival isn't recorded yet at greeting time
     message = f"Hoş geldin {first_name}, {ordinal}. ziyaretin."
+    if streak_days >= 2:
+        message += f" {streak_days} gündür üst üste buradasın!"
     if current_reservation is not None:
         message += (
             f" Bugün {current_reservation.resource_name} rezervasyonun var."
         )
 
     return {
+        "streak_days": streak_days,
         "user": {
             "id": str(user.id),
             "full_name": user.full_name,

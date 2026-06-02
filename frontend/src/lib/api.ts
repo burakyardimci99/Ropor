@@ -57,9 +57,25 @@ export interface LeaderboardEntry {
   badge_count: number;
 }
 
+export interface InsidePerson {
+  id: string;
+  full_name: string;
+  role: string;
+  interests: string[];
+  intent: string | null;
+  entered_at: string | null;
+}
+
 export interface LiveDashboard {
-  currently_inside: { id: string; full_name: string; role: string }[];
+  currently_inside: InsidePerson[];
   recent_activity: { full_name: string; entered_at: string }[];
+  generated_at: string;
+}
+
+export interface WeeklyDensity {
+  days: { date: string; count: number }[];
+  peak: number;
+  total: number;
   generated_at: string;
 }
 
@@ -109,6 +125,8 @@ export const api = {
     get<LeaderboardEntry[]>("/api/leaderboard?period=monthly&limit=10"),
 
   live: () => get<LiveDashboard>("/api/dashboard/live"),
+
+  density: () => get<WeeklyDensity>("/api/dashboard/density"),
 
   setVisitIntent: (visit_id: string, intent: string) =>
     post<{ status: string }>(`/api/visits/${visit_id}/intent`, { intent }),

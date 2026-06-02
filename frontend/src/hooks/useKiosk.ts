@@ -16,13 +16,14 @@ import { wsUrlFor } from "@/lib/origin";
 const GREETING_DWELL_MS = 7000;
 const WELCOME_DWELL_MS = 9000;
 const UNKNOWN_TIMEOUT_MS = 15000;
+const SCAN_DWELL_MS = 1400;
 const FORM_IDLE_MS = 120000;
 const INTENT_IDLE_MS = 30000;
 const INTENT_SAVED_DWELL_MS = 2200;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function useKiosk() {
+export function useKiosk(detectionActive = true) {
   const [state, dispatch] = useReducer(reducer, initialState);
 
   // Refs mirror state so async/WS callbacks read fresh values.
@@ -30,6 +31,8 @@ export function useKiosk() {
   stateRef.current = state;
   const screenRef = useRef(state.screen);
   screenRef.current = state.screen;
+  const detectionActiveRef = useRef(detectionActive);
+  detectionActiveRef.current = detectionActive;
   const onbRef = useRef<OnboardingData>(state.onboarding);
   onbRef.current = state.onboarding;
   const embeddingRefRef = useRef<string | null>(state.embeddingRef);
@@ -38,11 +41,19 @@ export function useKiosk() {
   const greetingTimer = useRef<ReturnType<typeof setTimeout>>();
   const unknownTimer = useRef<ReturnType<typeof setTimeout>>();
   const idleTimer = useRef<ReturnType<typeof setTimeout>>();
+  const scanTimer = useRef<ReturnType<typeof setTimeout>>();
+  // Latest recognition result captured while the "Tanınıyor…" scan plays.
+  const pendingResult = useRef<{
+    incoming: string;
+    payload: Record<string, unknown>;
+  } | null>(null);
 
   const clearTimers = useCallback(() => {
     clearTimeout(greetingTimer.current);
     clearTimeout(unknownTimer.current);
     clearTimeout(idleTimer.current);
+    clearTimeout(scanTimer.current);
+    pendingResult.current = null;
   }, []);
 
   const goAmbient = useCallback(() => {
@@ -235,15 +246,22 @@ export function useKiosk() {
     armIdle();
   }, [completeOnboarding, armIdle]);
 
+  // When the operator pauses detection, drop back to ambient — but never
+  // interrupt an in-progress form/profile flow.
+  useEffect(() => {
+    if (detectionActive) return;
+    if (LOCKED_SCREENS.includes(screenRef.current)) return;
+    goAmbient();
+  }, [detectionActive, goAmbient]);
+
   useEffect(() => {
     let closed = false;
     let retry: ReturnType<typeof setTimeout>;
     let ws: WebSocket;
 
-    const handleBackend = (incoming: string, payload: Record<string, unknown>) => {
-      const cur = screenRef.current;
-      if (LOCKED_SCREENS.includes(cur)) return;
-
+    // Commit a recognition result to the screen (used directly, or flushed
+    // after the scan animation).
+    const applyResult = (incoming: string, payload: Record<string, unknown>) => {
       if (incoming === "GREETING") {
         clearTimeout(greetingTimer.current);
         dispatch({ type: "SHOW_GREETING", payload });
@@ -258,12 +276,52 @@ export function useKiosk() {
           }
         }, GREETING_DWELL_MS);
       } else if (incoming === "UNKNOWN_PROMPT") {
-        if (cur === "UNKNOWN_PROMPT") return;
         const ref = (payload.embedding_ref as string) ?? "";
         dispatch({ type: "SHOW_UNKNOWN", embeddingRef: ref });
         clearTimeout(unknownTimer.current);
         unknownTimer.current = setTimeout(startVisitor, UNKNOWN_TIMEOUT_MS);
       }
+    };
+
+    const handleBackend = (incoming: string, payload: Record<string, unknown>) => {
+      const cur = screenRef.current;
+      // Detection paused by the operator: ignore all face-driven transitions.
+      if (!detectionActiveRef.current) return;
+      if (LOCKED_SCREENS.includes(cur)) return;
+
+      // face_lost: only meaningful if it interrupts an in-progress scan.
+      if (incoming === "AMBIENT") {
+        if (cur === "SCANNING") {
+          pendingResult.current = null;
+          goAmbient();
+        }
+        return;
+      }
+
+      if (incoming !== "GREETING" && incoming !== "UNKNOWN_PROMPT") return;
+
+      // Bridge AMBIENT -> result with a brief "Tanınıyor…" scan animation.
+      if (cur === "AMBIENT") {
+        pendingResult.current = { incoming, payload };
+        dispatch({ type: "SHOW_SCANNING" });
+        clearTimeout(scanTimer.current);
+        scanTimer.current = setTimeout(() => {
+          const p = pendingResult.current;
+          pendingResult.current = null;
+          if (p) applyResult(p.incoming, p.payload);
+        }, SCAN_DWELL_MS);
+        return;
+      }
+
+      // Still scanning: keep the freshest result; the timer will flush it.
+      if (cur === "SCANNING") {
+        pendingResult.current = { incoming, payload };
+        return;
+      }
+
+      // Already on a result screen: don't re-trigger an identical unknown.
+      if (incoming === "UNKNOWN_PROMPT" && cur === "UNKNOWN_PROMPT") return;
+      applyResult(incoming, payload);
     };
 
     const connect = () => {
@@ -314,3 +372,4 @@ export function useKiosk() {
     },
   };
 }
+

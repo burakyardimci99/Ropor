@@ -54,6 +54,51 @@ async def leaderboard(
 async def live(session: AsyncSession) -> dict:
     inside = await presence.list_inside()
 
+    # Enrich the presence rows with each person's latest visit so the kiosk can
+    # show *what* they're working on (daily_intent) and *since when*.
+    ids = []
+    for p in inside:
+        raw_id = p.get("id")
+        if raw_id:
+            try:
+                ids.append(UUID(str(raw_id)))
+            except ValueError:
+                continue
+
+    latest: dict[UUID, dict] = {}
+    if ids:
+        rows = (
+            await session.execute(
+                select(Visit.user_id, Visit.entered_at, Visit.daily_intent)
+                .where(Visit.user_id.in_(ids))
+                .order_by(Visit.user_id, Visit.entered_at.desc())
+            )
+        ).all()
+        for uid, entered, intent in rows:
+            if uid not in latest:  # first row per user == most recent visit
+                latest[uid] = {"entered_at": entered, "daily_intent": intent}
+
+    currently_inside = []
+    for p in inside:
+        detail = None
+        raw_id = p.get("id")
+        if raw_id:
+            try:
+                detail = latest.get(UUID(str(raw_id)))
+            except ValueError:
+                detail = None
+        entered_at = detail["entered_at"] if detail else None
+        currently_inside.append(
+            {
+                "id": raw_id,
+                "full_name": p.get("full_name"),
+                "role": p.get("role"),
+                "interests": p.get("interests") or [],
+                "intent": detail["daily_intent"] if detail else None,
+                "entered_at": entered_at.isoformat() if entered_at else None,
+            }
+        )
+
     recent = (
         await session.execute(
             select(User.full_name, Visit.entered_at)
@@ -64,12 +109,50 @@ async def live(session: AsyncSession) -> dict:
     ).all()
 
     return {
-        "currently_inside": inside,
+        "currently_inside": currently_inside,
         "machines": [],
         "recent_activity": [
             {"full_name": n, "entered_at": e.isoformat()} for n, e in recent
         ],
         "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def weekly_density(session: AsyncSession, days: int = 7) -> dict:
+    """Visits per day for the trailing ``days`` window (oldest -> newest).
+
+    Timestamps are bucketed by their UTC calendar date. The response always
+    contains exactly ``days`` entries so the chart axis stays stable even on
+    days with no traffic.
+    """
+    now = datetime.now(timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = today - timedelta(days=days - 1)
+
+    entered = (
+        await session.scalars(
+            select(Visit.entered_at).where(Visit.entered_at >= start)
+        )
+    ).all()
+
+    counts: dict[str, int] = {
+        (start + timedelta(days=i)).date().isoformat(): 0 for i in range(days)
+    }
+    for e in entered:
+        if e is None:
+            continue
+        aware = e if e.tzinfo else e.replace(tzinfo=timezone.utc)
+        key = aware.astimezone(timezone.utc).date().isoformat()
+        if key in counts:
+            counts[key] += 1
+
+    series = [{"date": date, "count": count} for date, count in counts.items()]
+    peak = max((d["count"] for d in series), default=0)
+    return {
+        "days": series,
+        "peak": peak,
+        "total": sum(d["count"] for d in series),
+        "generated_at": now.isoformat(),
     }
 
 

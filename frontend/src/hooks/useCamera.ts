@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { RefObject, useCallback, useEffect, useRef, useState } from "react";
 
 import { wsUrlFor } from "@/lib/origin";
 
@@ -23,6 +23,22 @@ export interface CameraStatus {
   error: string | null;
 }
 
+/** Face bounding box echoed by the backend, in the captured frame's pixels. */
+export interface FaceBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  frame_w: number;
+  frame_h: number;
+}
+
+/** Latest face the backend saw in the camera stream: its box and, if matched, a name. */
+export interface DetectedFace {
+  box: FaceBox;
+  name: string | null;
+}
+
 /**
  * Captures camera frames in the browser and streams them as JPEG WebSocket
  * binary messages to the backend. The hook runs for the lifetime of the page.
@@ -34,8 +50,10 @@ export function useCamera() {
     wsConnected: false,
     error: null,
   });
+  const [face, setFace] = useState<DetectedFace | null>(null);
 
   const streamRef = useRef<MediaStream | null>(null);
+  // Attached by the consumer to a rendered <video> so the feed can be shown.
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -65,13 +83,13 @@ export function useCamera() {
         audio: false,
       });
       streamRef.current = stream;
-      if (!videoRef.current) {
-        videoRef.current = document.createElement("video");
-        videoRef.current.muted = true;
-        videoRef.current.playsInline = true;
+      const video = videoRef.current;
+      if (video) {
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+        await video.play();
       }
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
       if (!canvasRef.current) {
         canvasRef.current = document.createElement("canvas");
         canvasRef.current.width = FRAME_WIDTH;
@@ -142,10 +160,23 @@ export function useCamera() {
       };
       ws.onclose = () => {
         setStatus((s) => ({ ...s, wsConnected: false }));
+        setFace(null);
         clearInterval(interval);
         if (!closed) retry = setTimeout(connect, 2000);
       };
       ws.onerror = () => ws.close();
+      // The backend echoes the live face box + recognized name per frame.
+      ws.onmessage = (ev) => {
+        if (typeof ev.data !== "string") return;
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === "face_box") {
+            setFace(msg.box ? { box: msg.box, name: msg.name ?? null } : null);
+          }
+        } catch {
+          /* ignore */
+        }
+      };
     };
 
     connect();
@@ -157,7 +188,12 @@ export function useCamera() {
     };
   }, [status.permission]);
 
-  return { status, retry: request };
+  return {
+    status,
+    retry: request,
+    videoRef: videoRef as RefObject<HTMLVideoElement>,
+    face,
+  };
 }
 
 

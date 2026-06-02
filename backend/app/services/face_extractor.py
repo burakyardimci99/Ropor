@@ -38,22 +38,29 @@ def warm() -> None:
     _load()
 
 
-def extract(jpeg_bytes: bytes) -> tuple[list[float] | None, float | None]:
-    """Decode a JPEG frame and return (embedding, quality) for the largest face.
+def get_face_values(jpeg_bytes: bytes) -> dict | None:
+    """Decode a JPEG frame and return the largest face's box, embedding and quality.
 
-    Returns (None, None) if the bytes don't decode or no face is found.
+    Returns ``None`` if the bytes don't decode or no face is found. The box is in
+    the frame's own pixel coordinates so the kiosk can scale it onto its preview::
+
+        {
+          "box": {"x", "y", "w", "h", "frame_w", "frame_h"},
+          "embedding": [...512],
+          "quality": float,
+        }
     """
     if not jpeg_bytes:
-        return None, None
+        return None
     arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
     img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
     if img is None:
-        return None, None
+        return None
 
     app = _load()
     faces = app.get(img)
     if not faces:
-        return None, None
+        return None
 
     # Pick the largest face by bounding-box area.
     def area(f) -> float:
@@ -61,6 +68,29 @@ def extract(jpeg_bytes: bytes) -> tuple[list[float] | None, float | None]:
         return (x2 - x1) * (y2 - y1)
 
     f = max(faces, key=area)
-    emb = f.normed_embedding.astype(float).tolist()
-    quality = float(getattr(f, "det_score", 0.0))
-    return emb, quality
+    x1, y1, x2, y2 = (float(v) for v in f.bbox)
+    frame_h, frame_w = img.shape[:2]
+    return {
+        "box": {
+            "x": x1,
+            "y": y1,
+            "w": x2 - x1,
+            "h": y2 - y1,
+            "frame_w": int(frame_w),
+            "frame_h": int(frame_h),
+        },
+        "embedding": f.normed_embedding.astype(float).tolist(),
+        "quality": float(getattr(f, "det_score", 0.0)),
+    }
+
+
+def extract(jpeg_bytes: bytes) -> tuple[list[float] | None, float | None]:
+    """Decode a JPEG frame and return (embedding, quality) for the largest face.
+
+    Thin wrapper over :func:`get_face_values` kept for callers that only need the
+    embedding. Returns (None, None) if no face is found.
+    """
+    values = get_face_values(jpeg_bytes)
+    if values is None:
+        return None, None
+    return values["embedding"], values["quality"]
