@@ -10,7 +10,22 @@ import { ScanViewport, useClock } from "@/components/kiosk/visuals";
 import { LeaderboardEntry, LiveDashboard, WeeklyDensity, api } from "@/lib/api";
 
 export function AmbientScreen() {
-  const { hh, mm, ss, date, day } = useClock();
+  const { hh } = useClock();
+
+  // Time-of-day greeting derived from the clock hour. `hh` is "--" until the
+  // clock mounts (see useClock), so parseInt is NaN on the server/first render
+  // and we fall back to a neutral welcome — which also keeps SSR and hydration
+  // in sync.
+  const hour = parseInt(hh, 10);
+  const greeting = Number.isNaN(hour)
+    ? "Hoş geldiniz"
+    : hour < 6
+      ? "İyi geceler"
+      : hour < 12
+        ? "Günaydın"
+        : hour < 18
+          ? "İyi günler"
+          : "İyi akşamlar";
   const [live, setLive] = useState<LiveDashboard | null>(null);
   const [density, setDensity] = useState<WeeklyDensity | null>(null);
   const [board, setBoard] = useState<LeaderboardEntry[]>([]);
@@ -46,46 +61,39 @@ export function AmbientScreen() {
       className="state-anim flex h-full w-full items-stretch"
       style={{ gap: "70px" }}
     >
-      {/* left: clock · who's-in-the-lab table · weekly density */}
+      {/* left: greeting · who's-in-the-lab table · scan ring */}
       <div className="flex flex-col" style={{ flex: "1.45 1 0", minWidth: 0, gap: "30px" }}>
-        <div>
-          <div style={{ fontSize: "26px", letterSpacing: ".34em", color: "var(--blue-bright)", fontWeight: 600 }}>
-            HOŞ GELDİNİZ
-          </div>
-          <div className="flex items-end" style={{ marginTop: "6px", lineHeight: 0.86 }}>
-            <span className="font-display" style={{ fontSize: "126px", fontWeight: 700, color: "#FFFFFF", letterSpacing: "-.02em" }}>
-              {hh}:{mm}
-            </span>
-            <span className="font-display" style={{ fontSize: "48px", fontWeight: 500, color: "var(--blue)", marginBottom: "16px", marginLeft: "10px" }}>
-              {ss}
-            </span>
-            <span style={{ marginLeft: "26px", marginBottom: "20px", fontSize: "30px", color: "#CFE6FF", fontWeight: 500 }}>
-              {date} · {day}
-            </span>
+        {/* Nudge the clock/greeting block up a little so it sits closer to the
+            top edge of the content area. */}
+        <div style={{ marginTop: "-28px" }}>
+          {/* Warm, time-of-day greeting that reads as a real welcome rather than
+              a small section label. The big clock that used to live here was
+              moved to a compact, informational readout in the bottom-right so it
+              no longer dominates the top-left. */}
+          <div style={{ fontSize: "46px", fontWeight: 600, color: "#EAF4FF", letterSpacing: ".005em" }}>
+            {greeting}
+            <span style={{ color: "#7FB2E6", fontWeight: 500 }}>, hoş geldiniz</span>
           </div>
         </div>
 
         <InsideTable people={inside} />
 
-        <div className="flex" style={{ gap: "44px" }}>
-          <div style={{ flex: "1 1 0", minWidth: 0 }}>{density && <DensityChart data={density} />}</div>
-          <div style={{ flex: "1 1 0", minWidth: 0 }}>
-            <TopVisitors entries={board} />
+        {/* scan ring + CTA, centered in the space the density chart used to
+            share (the chart moved under the leaderboard on the right). */}
+        <div className="flex flex-1 flex-col items-center justify-center" style={{ gap: "16px" }}>
+          <ScanViewport state="idle" size={240} />
+          <div style={{ fontSize: "34px", fontWeight: 700, color: "#FFFFFF", textAlign: "center" }}>
+            Yüzünüzü kameraya gösterin
           </div>
         </div>
       </div>
 
-      {/* right: scan ring + CTA */}
-      <div className="flex flex-col items-center justify-center" style={{ flex: "1 1 0", gap: "40px" }}>
-        <ScanViewport state="idle" size={420} />
-        <div className="flex flex-col items-center" style={{ gap: "14px" }}>
-          <div style={{ fontSize: "52px", fontWeight: 700, color: "#FFFFFF", textAlign: "center" }}>
-            Yüzünüzü kameraya gösterin
-          </div>
-          <div style={{ fontSize: "28px", color: "#7FB2E6", fontWeight: 400, textAlign: "center" }}>
-            Sisteme erişim için lütfen kameraya bakın
-          </div>
-        </div>
+      {/* right: top-visitors leaderboard with the weekly density chart stacked
+          underneath it. Aligned to the top so the leaderboard lines up with the
+          clock/greeting rather than floating in the vertical center. */}
+      <div className="flex flex-col justify-start" style={{ flex: "1 1 0", minWidth: 0, marginTop: "-28px", gap: "34px" }}>
+        <TopVisitors entries={board} />
+        {density && <DensityChart data={density} />}
       </div>
     </motion.div>
   );

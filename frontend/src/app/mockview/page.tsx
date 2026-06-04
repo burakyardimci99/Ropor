@@ -34,7 +34,7 @@ export default function MockAmbient() {
   const inside = MOCK_INSIDE;
   return (
     <main className="relative h-screen w-screen overflow-hidden">
-      <KioskStage glow="idle" chrome={{ backendConnected: true, cameraConnected: true, cameraText: "Kamera bağlı · 0f", privacyNote: "Yüz tanıma aktif" }}>
+      <KioskStage glow="idle" chrome={{ backendConnected: true, detectionActive: true }}>
         <motion.div className="state-anim flex h-full w-full items-stretch" style={{ gap: "70px" }}>
           <div className="flex flex-col" style={{ flex: "1.45 1 0", minWidth: 0, gap: "30px" }}>
             <div>

@@ -1,8 +1,9 @@
 "use client";
 
-import { RefObject, useState } from "react";
+import { RefObject, useEffect, useState } from "react";
 
 import { CameraStatus, DetectedFace } from "@/hooks/useCamera";
+import { useKeyCombo } from "@/hooks/useKeyCombo";
 
 const PREVIEW_W = 320;
 const PREVIEW_H = 240; // 4:3, matching the 640x480 capture
@@ -16,8 +17,11 @@ interface Props {
 /**
  * Small live camera tile (bottom-left). Mirrors the selfie feed and overlays a
  * square on the detected face, labelled with the recognized name — or
- * "Bilinmiyor" when the face isn't matched to anyone. Can be closed to a small
- * pill and reopened.
+ * "Bilinmiyor" when the face isn't matched to anyone.
+ *
+ * Hidden feature: there is no visible control. Pressing "a" and "d" together
+ * toggles the tile open/closed (so operators can peek at the feed without
+ * cluttering the kiosk UI). The on-screen × close button still works too.
  *
  * The <video> is always mounted in the same spot in the tree, even when the
  * tile is "closed" (the wrapper just collapses off-screen). useCamera assigns
@@ -28,6 +32,19 @@ interface Props {
 export function CameraPreview({ videoRef, face, status }: Props) {
   const granted = status.permission === "granted";
   const [open, setOpen] = useState(false);
+
+  // Hidden toggle: pressing "a" + "d" simultaneously opens/closes the tile.
+  useKeyCombo(["a", "d"], () => setOpen((v) => !v));
+
+  // The <video> lives in a 1px, opacity-0 wrapper while closed; the browser can
+  // pause it (or never start it after srcObject is set off-screen). When the
+  // tile is opened we have a real, visible element, so kick playback again —
+  // otherwise the feed shows up black.
+  useEffect(() => {
+    if (open && granted) {
+      videoRef.current?.play().catch(() => {});
+    }
+  }, [open, granted, videoRef]);
 
   // Scale the backend's frame-pixel box onto the preview, mirrored to match the
   // flipped (selfie) video.
@@ -113,16 +130,6 @@ export function CameraPreview({ videoRef, face, status }: Props) {
           </>
         )}
       </div>
-
-      {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="absolute bottom-24 left-5 z-40 flex items-center gap-2 rounded-full border border-white/15 bg-black/60 px-4 py-2 text-sm text-white/80 shadow-2xl backdrop-blur transition hover:bg-black/80"
-        >
-          📷 Kamerayı göster
-        </button>
-      )}
     </>
   );
 }

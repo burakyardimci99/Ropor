@@ -32,11 +32,26 @@ const TR_MONTHS = [
   "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
 ];
 export function useClock() {
-  const [now, setNow] = useState(new Date());
+  // Must start as null so the server-rendered HTML and the first client render
+  // are identical (both show the "--" placeholders below). If we seeded this
+  // with `new Date()`, the server would bake in its clock time and the client
+  // would hydrate a few seconds later with a different time, triggering a React
+  // hydration mismatch (e.g. server "12" vs client "15" seconds). We fill in the
+  // real time only after mount, inside the effect.
+  const [now, setNow] = useState<Date | null>(null);
   useEffect(() => {
+    setNow(new Date()); // first real tick, right after hydration
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  // Until the post-mount effect runs, render fixed-width placeholders. They are
+  // the same 2-char width as the real values, so there is no layout shift when
+  // the clock fills in.
+  if (!now) {
+    return { hh: "--", mm: "--", ss: "--", date: "", day: "" };
+  }
+
   const hh = String(now.getHours()).padStart(2, "0");
   const mm = String(now.getMinutes()).padStart(2, "0");
   const ss = String(now.getSeconds()).padStart(2, "0");
@@ -72,9 +87,6 @@ export function Logo() {
           style={{ fontWeight: 700, fontSize: "42px", letterSpacing: ".04em", color: "#EAF4FF" }}
         >
           AI&nbsp;LAB
-        </div>
-        <div style={{ fontSize: "17px", letterSpacing: ".42em", color: "#6FA8DE", fontWeight: 600, marginTop: "4px" }}>
-          ERİŞİM SİSTEMİ
         </div>
       </div>
     </div>
@@ -339,15 +351,15 @@ const GLOW: Record<StageState, string> = {
 };
 
 export interface StageChrome {
-  zoneLabel?: string;
-  cameraConnected?: boolean;
+  /** Backend WebSocket health — drives the "Sistem bağlı / Bağlantı yok" pill. */
   backendConnected?: boolean;
-  cameraText?: string;
-  /** Top-left KVKK transparency line. */
-  privacyNote?: string;
-  /** Operator detection toggle. When a handler is given, a button is shown. */
+  /**
+   * Whether face detection is currently running. Drives the "Yüz tanıma aktif /
+   * kapalı" indicator in the top-right. The detection on/off action no longer
+   * has a visible button — it is triggered by the hidden "a"+"l" operator
+   * shortcut wired up in the page (which still prompts for the PIN).
+   */
   detectionActive?: boolean;
-  onToggleDetection?: () => void;
 }
 
 /**
@@ -367,12 +379,8 @@ export function KioskStage({
   children: ReactNode;
 }) {
   const { sx, sy } = useStageScale();
-  const cameraOk = chrome?.cameraConnected ?? false;
-  const detectionActive = chrome?.detectionActive ?? true;
-  const statusDot = !detectionActive ? "#6B7A99" : cameraOk ? "var(--green)" : "var(--amber)";
-  const statusText = !detectionActive
-    ? "Algılama kapalı"
-    : chrome?.cameraText ?? (cameraOk ? "Kamera bağlı" : "Kamera bekleniyor");
+  // Small informational clock shown in the bottom-right corner of the shell.
+  const { hh, mm, date, day } = useClock();
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-black">
@@ -392,21 +400,42 @@ export function KioskStage({
         <div className="vignette" />
         {showConfetti && <Confetti />}
 
-        {/* header: logo + zone pill */}
+        {/* header: logo (left) + status pills (right). The two pills sit side by
+            side: the face-recognition indicator first, then the backend/system
+            indicator right next to it, both styled identically. */}
         <div style={{ position: "absolute", top: 43, left: 77, right: 77 }}>
           <div className="flex items-start justify-between" style={{ width: "100%" }}>
             <Logo />
             <div className="flex items-center" style={{ gap: "14px" }}>
-              {chrome?.privacyNote && (
-                <div className="glass flex items-center rounded-full" style={{ gap: "10px", padding: "14px 22px" }}>
-                  <span style={{ width: "12px", height: "12px", borderRadius: "50%", background: "#ff5470", boxShadow: "0 0 14px #ff5470" }} />
-                  <span style={{ fontSize: "20px", color: "#D8E8FF", fontWeight: 500 }}>{chrome.privacyNote}</span>
-                </div>
-              )}
-              <div className="glass flex items-center rounded-full" style={{ gap: "12px", padding: "14px 24px" }}>
-                <span style={{ width: "12px", height: "12px", borderRadius: "50%", background: "var(--blue)", boxShadow: "0 0 14px var(--blue)" }} />
+              {/* Face-recognition indicator: green + "aktif" while detection is
+                  running, muted grey + "kapalı" when an operator has paused it
+                  (via the hidden "a"+"l" shortcut). Mirrors the system pill's
+                  look so the two read as a matched pair. */}
+              <div className="glass flex items-center rounded-full" style={{ gap: "12px", padding: "14px 26px" }}>
+                <span
+                  className={chrome?.detectionActive ? "blink" : undefined}
+                  style={{
+                    width: "12px", height: "12px", borderRadius: "50%",
+                    background: chrome?.detectionActive ? "var(--green)" : "#6B7A99",
+                    boxShadow: chrome?.detectionActive ? "0 0 12px var(--green)" : "none",
+                  }}
+                />
                 <span style={{ fontSize: "22px", color: "#BFE0FF", fontWeight: 500 }}>
-                  {chrome?.zoneLabel ?? "Güvenli Bölge · Kat 1"}
+                  {chrome?.detectionActive ? "Yüz tanıma aktif" : "Yüz tanıma kapalı"}
+                </span>
+              </div>
+
+              {/* System / backend connection indicator. */}
+              <div className="glass flex items-center rounded-full" style={{ gap: "12px", padding: "14px 26px" }}>
+                <span
+                  style={{
+                    width: "12px", height: "12px", borderRadius: "50%",
+                    background: chrome?.backendConnected ? "var(--green)" : "#ff5470",
+                    boxShadow: `0 0 12px ${chrome?.backendConnected ? "var(--green)" : "#ff5470"}`,
+                  }}
+                />
+                <span style={{ fontSize: "22px", color: "#BFE0FF", fontWeight: 500 }}>
+                  {chrome?.backendConnected ? "Sistem bağlı" : "Bağlantı yok"}
                 </span>
               </div>
             </div>
@@ -418,59 +447,26 @@ export function KioskStage({
           {children}
         </div>
 
-        {/* bottom-right: detection toggle + camera status */}
-        <div className="flex items-center" style={{ position: "absolute", right: 77, bottom: 43, gap: "14px" }}>
-          {chrome?.onToggleDetection && (
-            <button
-              type="button"
-              onClick={chrome.onToggleDetection}
-              className="dock-btn glass flex items-center rounded-full"
-              style={{
-                gap: "12px", padding: "14px 28px", cursor: "pointer", fontSize: "22px", fontWeight: 600,
-                color: detectionActive ? "#FCD34D" : "#A7F3D0",
-                border: `2px solid ${detectionActive ? "rgba(251,191,36,.5)" : "rgba(52,211,153,.55)"}`,
-              }}
-            >
-              {detectionActive ? (
-                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                  <rect x="5" y="4" width="4" height="14" rx="1.5" fill="#FCD34D" />
-                  <rect x="13" y="4" width="4" height="14" rx="1.5" fill="#FCD34D" />
-                </svg>
-              ) : (
-                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-                  <path d="M6 4l13 7-13 7V4Z" fill="#A7F3D0" />
-                </svg>
-              )}
-              {detectionActive ? "Algılamayı Duraklat" : "Algılamayı Başlat"}
-            </button>
-          )}
-          <div className="glass flex items-center rounded-full" style={{ gap: "14px", padding: "14px 26px" }}>
-            <span
-              className={detectionActive ? "blink" : undefined}
-              style={{
-                width: "15px", height: "15px", borderRadius: "50%", background: statusDot,
-                boxShadow: detectionActive ? `0 0 16px 2px ${statusDot}` : "none",
-              }}
-            />
-            <span style={{ fontSize: "24px", color: "#BFE0FF", fontWeight: 500 }}>{statusText}</span>
-          </div>
-        </div>
+        {/* Detection on/off has no visible button — it is toggled by the hidden
+            "a"+"l" operator shortcut (see page.tsx), which still prompts for the
+            PIN before flipping state. The current state is reflected by the
+            "Yüz tanıma" indicator in the header above. */}
 
-        {/* bottom-left backend connection */}
-        <div style={{ position: "absolute", left: 77, bottom: 43 }}>
-          <div className="glass flex items-center rounded-full" style={{ gap: "12px", padding: "12px 22px" }}>
-            <span
-              style={{
-                width: "12px", height: "12px", borderRadius: "50%",
-                background: chrome?.backendConnected ? "var(--green)" : "#ff5470",
-                boxShadow: `0 0 12px ${chrome?.backendConnected ? "var(--green)" : "#ff5470"}`,
-              }}
-            />
-            <span style={{ fontSize: "20px", color: "#9FC4EA", fontWeight: 500 }}>
-              {chrome?.backendConnected ? "Sistem bağlı" : "Bağlantı yok"}
+        {/* Bottom-right informational clock. Right-aligned to the same 77px
+            screen margin as the header pills (and bottom:43, matching the
+            header's top:43) so it sits flush with the screen's framing rather
+            than dominating the layout like the old oversized clock did. */}
+        <div style={{ position: "absolute", right: 77, bottom: 43, textAlign: "right" }}>
+          <div className="flex items-baseline justify-end" style={{ gap: "14px" }}>
+            <span className="font-display" style={{ fontSize: "40px", fontWeight: 600, color: "#EAF4FF", letterSpacing: ".01em" }}>
+              {hh}:{mm}
+            </span>
+            <span style={{ fontSize: "22px", color: "#7FB2E6", fontWeight: 500 }}>
+              {date} · {day}
             </span>
           </div>
         </div>
+
       </div>
     </div>
   );

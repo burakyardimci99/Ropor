@@ -1,6 +1,16 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 import { CameraStatus as Status } from "@/hooks/useCamera";
+
+// How long an error state must persist before we actually show the blocking
+// overlay. Cameras (and the getUserMedia handshake, especially under React
+// StrictMode's double-mount in dev) often take a moment to come up, briefly
+// reporting "unavailable" before flipping to "granted". Waiting out this grace
+// period avoids flashing a scary "kamera bulunamadı" screen that immediately
+// disappears once the camera connects.
+const ERROR_GRACE_MS = 1500;
 
 interface Props {
   status: Status;
@@ -22,7 +32,25 @@ export function CameraIndicator({ status }: Props) {
 }
 
 export function CameraBlocker({ status, onRetry }: Props) {
-  if (status.permission === "granted" || status.permission === "pending") return null;
+  // "pending" and "granted" are never error states; everything else (denied,
+  // unavailable, insecure) is.
+  const isError =
+    status.permission !== "granted" && status.permission !== "pending";
+
+  // Only reveal the overlay once the error has held for ERROR_GRACE_MS. If the
+  // camera connects within that window, `isError` flips false, the timer is
+  // cleared, and the overlay never appears.
+  const [showBlocker, setShowBlocker] = useState(false);
+  useEffect(() => {
+    if (!isError) {
+      setShowBlocker(false);
+      return;
+    }
+    const t = setTimeout(() => setShowBlocker(true), ERROR_GRACE_MS);
+    return () => clearTimeout(t);
+  }, [isError]);
+
+  if (!isError || !showBlocker) return null;
 
   const title =
     status.permission === "denied"
