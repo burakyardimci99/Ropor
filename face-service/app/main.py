@@ -24,6 +24,13 @@ def _start_producer(recognizer, queue: asyncio.Queue, loop: asyncio.AbstractEven
 
 async def run() -> None:
     logger.info("face-service starting in %s mode", config.mode)
+    # The mock recognizer only exists to drive the demo. With the demo switched
+    # off we keep the process alive (so compose doesn't churn it) but emit
+    # nothing — the kiosk just stays on its ambient/scanning screen.
+    if config.mode == "mock" and not config.demo_mode:
+        logger.info("DEMO_MODE is off -> mock recognizer idle, sending no faces")
+        while True:
+            await asyncio.sleep(3600)
     recognizer = build_recognizer(
         config.mode,
         config.embedding_dim,

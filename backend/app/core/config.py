@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     # Local timezone used for day-based stats (e.g. visit streaks).
     lab_timezone: str = "Europe/Istanbul"
 
+    # Master demo switch. When false, the seed script refuses to populate demo
+    # data and the mock face-service stops emitting synthetic faces. Flip to
+    # true to bring the canned demo (mock + seed) back together.
+    demo_mode: bool = False
+
     # Admin panel: empty disables the panel entirely (503 from admin endpoints).
     admin_token: str = ""
 

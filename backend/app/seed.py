@@ -1,16 +1,23 @@
-"""Seed demo data so the mock pipeline shows real recognition.
+"""Seed (or clean) demo data so the mock pipeline shows real recognition.
 
-Run:  docker compose exec backend python -m app.seed
+Seed:   docker compose exec backend python -m app.seed
+Clean:  docker compose exec backend python -m app.seed clean
 
 The demo user's face embedding is the same deterministic vector the mock
 face-service sends as a "returning user", so recognition fires end-to-end.
-Idempotent: re-running won't duplicate the demo user.
+Seeding is idempotent (won't duplicate the demo user) and is gated behind the
+DEMO_MODE flag so the canned demo is enabled/disabled together with the mock
+face-service. ``clean`` removes the demo user and everything it owns (visits,
+embeddings, reservations, badge links); it runs regardless of DEMO_MODE so you
+can always wipe demo data. Reusable badge *definitions* are left in place.
 """
 import asyncio
+import sys
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
+from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.core.embedding import demo_known_embedding
 from app.models import Badge, FaceEmbedding, Reservation, User, UserBadge, Visit
@@ -29,6 +36,9 @@ async def _get_or_create_badge(session, code: str, name: str, description: str) 
 
 
 async def seed() -> None:
+    if not settings.demo_mode:
+        print("DEMO_MODE is off; refusing to seed. Set DEMO_MODE=true to enable the demo.")
+        return
     async with AsyncSessionLocal() as session:
         existing = await session.scalar(select(User).where(User.email == DEMO_EMAIL))
         if existing is not None:
@@ -86,5 +96,32 @@ async def seed() -> None:
         print(f"seeded demo user {demo.id} with known embedding, 5 visits, 1 reservation, 1 badge")
 
 
+async def clean() -> None:
+    """Remove the demo user and every row it owns. Badge definitions stay."""
+    async with AsyncSessionLocal() as session:
+        user_id = await session.scalar(
+            select(User.id).where(User.email == DEMO_EMAIL)
+        )
+        if user_id is None:
+            print("no demo user found; nothing to clean")
+            return
+        # Explicit child deletes (in FK order) so this works whether or not the
+        # DB has ON DELETE CASCADE wired up.
+        for model in (UserBadge, Reservation, Visit, FaceEmbedding):
+            await session.execute(delete(model).where(model.user_id == user_id))
+        await session.execute(delete(User).where(User.id == user_id))
+        await session.commit()
+        print(
+            f"cleaned demo user {user_id} (+ its visits, embeddings, reservations, badge links)"
+        )
+
+
 if __name__ == "__main__":
-    asyncio.run(seed())
+    command = sys.argv[1] if len(sys.argv) > 1 else "seed"
+    if command == "clean":
+        asyncio.run(clean())
+    elif command == "seed":
+        asyncio.run(seed())
+    else:
+        print(f"usage: python -m app.seed [seed|clean] (got {command!r})")
+        sys.exit(2)
