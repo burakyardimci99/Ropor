@@ -2,7 +2,7 @@
 
 import { motion } from "framer-motion";
 
-import { LeaderboardEntry } from "@/lib/api";
+import { LeaderboardEntry, LeaderboardPeriod } from "@/lib/api";
 
 function initialsOf(fullName: string) {
   const parts = fullName.trim().split(/\s+/).filter(Boolean);
@@ -12,7 +12,19 @@ function initialsOf(fullName: string) {
 // Rank accent: gold / silver / bronze for the podium, blue otherwise.
 const RANK_COLOR = ["#FBBF24", "#CBD5E1", "#D8A06A"];
 
-export function TopVisitors({ entries }: { entries: LeaderboardEntry[] }) {
+// Label for the active time window, shown top-right as the leaderboard rotates.
+const PERIOD_LABEL: Record<LeaderboardPeriod, string> = {
+  weekly: "Bu hafta",
+  monthly: "Bu ay",
+};
+
+export function TopVisitors({
+  entries,
+  period = "monthly",
+}: {
+  entries: LeaderboardEntry[];
+  period?: LeaderboardPeriod;
+}) {
   const rows = entries.slice(0, 4);
   const max = Math.max(1, ...rows.map((r) => r.visit_count));
 
@@ -22,7 +34,16 @@ export function TopVisitors({ entries }: { entries: LeaderboardEntry[] }) {
         <div style={{ fontSize: "20px", letterSpacing: ".2em", color: "#6FA8DE", fontWeight: 600 }}>
           EN ÇOK ZİYARET EDEN
         </div>
-        <div style={{ fontSize: "22px", color: "#9FC4EA", fontWeight: 500 }}>Bu ay</div>
+        {/* Fade the label in as the leaderboard rotates weekly<->monthly. */}
+        <motion.div
+          key={period}
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3 }}
+          style={{ fontSize: "22px", color: "#9FC4EA", fontWeight: 500 }}
+        >
+          {PERIOD_LABEL[period]}
+        </motion.div>
       </div>
 
       {rows.length === 0 ? (

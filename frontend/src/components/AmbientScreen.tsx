@@ -7,7 +7,12 @@ import { DensityChart } from "@/components/DensityChart";
 import { InsideTable } from "@/components/InsideTable";
 import { TopVisitors } from "@/components/TopVisitors";
 import { ScanViewport, useClock } from "@/components/kiosk/visuals";
-import { LeaderboardEntry, LiveDashboard, WeeklyDensity, api } from "@/lib/api";
+import { LeaderboardEntry, LeaderboardPeriod, LiveDashboard, WeeklyDensity, api } from "@/lib/api";
+
+// The leaderboard rotates between the weekly and monthly "top visitors",
+// swapping the active window every ROTATE_MS.
+const PERIODS: LeaderboardPeriod[] = ["weekly", "monthly"];
+const ROTATE_MS = 12000;
 
 export function AmbientScreen() {
   const { hh } = useClock();
@@ -29,6 +34,8 @@ export function AmbientScreen() {
   const [live, setLive] = useState<LiveDashboard | null>(null);
   const [density, setDensity] = useState<WeeklyDensity | null>(null);
   const [board, setBoard] = useState<LeaderboardEntry[]>([]);
+  const [periodIdx, setPeriodIdx] = useState(0);
+  const period = PERIODS[periodIdx];
 
   useEffect(() => {
     const load = () => api.live().then(setLive).catch(() => {});
@@ -44,11 +51,19 @@ export function AmbientScreen() {
     return () => clearInterval(poll);
   }, []);
 
+  // Refetch whenever the active window changes, and keep polling within it so
+  // a window that lingers stays fresh.
   useEffect(() => {
-    const load = () => api.leaderboard().then(setBoard).catch(() => {});
+    const load = () => api.leaderboard(period).then(setBoard).catch(() => {});
     load();
     const poll = setInterval(load, 60000);
     return () => clearInterval(poll);
+  }, [period]);
+
+  // Cycle through the windows on a fixed interval.
+  useEffect(() => {
+    const t = setInterval(() => setPeriodIdx((i) => (i + 1) % PERIODS.length), ROTATE_MS);
+    return () => clearInterval(t);
   }, []);
 
   const inside = live?.currently_inside ?? [];
@@ -92,7 +107,7 @@ export function AmbientScreen() {
           underneath it. Aligned to the top so the leaderboard lines up with the
           clock/greeting rather than floating in the vertical center. */}
       <div className="flex flex-col justify-start" style={{ flex: "1 1 0", minWidth: 0, marginTop: "-28px", gap: "34px" }}>
-        <TopVisitors entries={board} />
+        <TopVisitors entries={board} period={period} />
         {density && <DensityChart data={density} />}
       </div>
     </motion.div>

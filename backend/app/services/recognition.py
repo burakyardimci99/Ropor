@@ -19,7 +19,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.db import AsyncSessionLocal
 from app.models import User, Visit
-from app.services import badges, presence
+from app.services import badges, klab_enrollment, presence
 from app.services.greeting import build_greeting
 from app.services.matching import find_nearest
 from app.ws.manager import kiosk_manager
@@ -177,6 +177,11 @@ async def _on_unknown(embedding: list[float], quality, similarity: float) -> Non
     if seen != settings.unknown_confirm_frames:
         return
 
+    # First try to recognize them from a klab profile photo and auto-enroll.
+    # Only if that misses do we fall back to self-service onboarding.
+    if await _try_klab_enroll(embedding, quality):
+        return
+
     # Confirmed unknown -> stash embedding so the kiosk can start onboarding.
     ref = await presence.cache_unknown_embedding(embedding)
     logger.info(
@@ -192,3 +197,61 @@ async def _on_unknown(embedding: list[float], quality, similarity: float) -> Non
             "payload": {"embedding_ref": ref, "quality": quality},
         }
     )
+
+
+async def _try_klab_enroll(embedding: list[float], quality) -> bool:
+    """Auto-enroll a confirmed-unknown face from a klab profile photo.
+
+    Returns True when the face matched a klab candidate above
+    ``klab_enroll_threshold`` and was enrolled + greeted (so the caller skips the
+    onboarding prompt). The stored embedding is the live one, so subsequent
+    frames recognize this person through the normal pipeline.
+    """
+    if not settings.klab_enroll_enabled:
+        return False
+
+    match = klab_enrollment.find_candidate(embedding)
+    if match is None:
+        return False
+    candidate, similarity = match
+    if similarity < settings.klab_enroll_threshold:
+        return False
+
+    async with AsyncSessionLocal() as session:
+        user = await klab_enrollment.auto_enroll(session, candidate, embedding, quality)
+
+        fresh_visit_id: str | None = None
+        if await presence.should_record_visit(user.id):
+            visit = Visit(user_id=user.id, detection_confidence=round(similarity, 3))
+            session.add(visit)
+            await session.commit()
+            await session.refresh(visit)
+            fresh_visit_id = str(visit.id)
+
+        greeting = await build_greeting(session, user.id)
+        mini = {
+            "id": str(user.id),
+            "full_name": user.full_name,
+            "role": user.role,
+            "interests": user.interests,
+            "avatar_url": user.avatar_url,
+        }
+
+    logger.info("auto-enrolled %s from klab (sim=%.3f)", user.id, similarity)
+
+    # A known face now owns the screen: drop the unknown streak, mark presence,
+    # and arm the greet cooldown so it isn't re-greeted every frame.
+    await presence.reset_unknown_seen()
+    await presence.mark_inside(user.id, mini)
+    await presence.should_greet(user.id)
+
+    if greeting is None:
+        return True
+
+    payload = {**greeting, "confidence": round(similarity, 3), "auto_enrolled": True}
+    if fresh_visit_id is not None:
+        payload["visit_id"] = fresh_visit_id
+    await kiosk_manager.broadcast(
+        {"type": "state_change", "state": "GREETING", "payload": payload}
+    )
+    return True

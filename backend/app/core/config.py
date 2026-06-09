@@ -49,6 +49,18 @@ class Settings(BaseSettings):
     # Local timezone used for day-based stats (e.g. visit streaks).
     lab_timezone: str = "Europe/Istanbul"
 
+    # External klab reservation DB (read-only). Empty disables auto-enrollment.
+    reservation_database_url: str = ""
+    # Match unknown live faces against klab profile photos and enroll on a hit.
+    klab_enroll_enabled: bool = True
+    # Cosine-similarity floor for a photo->live match; keep it conservative since
+    # a false positive enrolls someone under the wrong identity.
+    klab_enroll_threshold: float = 0.5
+    # How often the in-memory klab candidate list is rebuilt from profile photos.
+    klab_enroll_refresh_seconds: int = 300
+    # ailab role given to auto-enrolled users.
+    klab_enroll_default_role: str = "staff"
+
     # Master demo switch. When false, the seed script refuses to populate demo
     # data and the mock face-service stops emitting synthetic faces. Flip to
     # true to bring the canned demo (mock + seed) back together.

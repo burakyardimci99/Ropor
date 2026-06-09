@@ -57,6 +57,8 @@ export interface LeaderboardEntry {
   badge_count: number;
 }
 
+export type LeaderboardPeriod = "weekly" | "monthly";
+
 export interface InsidePerson {
   id: string;
   full_name: string;
@@ -121,8 +123,8 @@ export const api = {
     body,
   ),
 
-  leaderboard: () =>
-    get<LeaderboardEntry[]>("/api/leaderboard?period=monthly&limit=10"),
+  leaderboard: (period: LeaderboardPeriod = "monthly") =>
+    get<LeaderboardEntry[]>(`/api/leaderboard?period=${period}&limit=10`),
 
   live: () => get<LiveDashboard>("/api/dashboard/live"),
 
